@@ -1,4 +1,4 @@
-# GetRight
+
 # GetRight
 # 🛡️ GetRight CMMC Assessment
 
