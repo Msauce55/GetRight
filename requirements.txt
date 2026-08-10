@@ -4,3 +4,4 @@ matplotlib
 reportlab
 python-dotenv
 openai
+cryptography
