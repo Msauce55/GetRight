@@ -7950,24 +7950,28 @@ def build_technical_pdf_report(
 
         supporting = finding.get("supporting_evidence", [])
 
-        if supporting:
+        supporting_clean = [str(item) for item in supporting if item]
+
+        if supporting_clean:
 
             story.append(
                 Paragraph(
                     "<b>Supporting Evidence:</b> "
-                    + "; ".join(supporting),
+                    + "; ".join(supporting_clean),
                     styles["Body"]
                 )
             )
 
         missing = finding.get("missing_evidence", [])
 
-        if missing:
+        missing_clean = [str(item) for item in missing if item]
+
+        if missing_clean:
 
             story.append(
                 Paragraph(
                     "<b>Missing Evidence:</b> "
-                    + "; ".join(missing),
+                    + "; ".join(missing_clean),
                     styles["Body"]
                 )
             )
