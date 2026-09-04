@@ -1,4 +1,3 @@
-#Groq Code
 import streamlit as st
 import pandas as pd
 import json
@@ -78,7 +77,55 @@ else:
 
     client = None
 
+# ============================================================
+# GROQ MODEL SELECTOR + AUTOMATIC FALLBACK
+# ============================================================
+AVAILABLE_MODELS = [
+    "openai/gpt-oss-120b",                          # Best quality (recommended)
+    "openai/gpt-oss-20b",                           # Fast + high quality
+    "meta-llama/llama-4-maverick-17b-128e-instruct", # Strong reasoning
+    "meta-llama/llama-4-scout-17b-16e-instruct",     # Fast
+    "qwen/qwen3-32b",                               # Excellent alternative
+]
 
+selected_model = st.sidebar.selectbox(
+    "LLM Model (Groq)",
+    options=AVAILABLE_MODELS,
+    index=0,
+    help="If the primary model fails, the system will automatically try the next ones."
+)
+
+st.sidebar.caption("Models listed in recommended order. Fallback is automatic.")
+
+
+def call_groq_with_fallback(messages, temperature=0, max_tokens=800):
+    """
+    Tries the selected model first, then automatically falls back
+    through the remaining models if a 404 / model_not_found occurs.
+    """
+    models_to_try = [selected_model] + [m for m in AVAILABLE_MODELS if m != selected_model]
+    last_error = None
+
+    for model in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            )
+            return response, model
+        except Exception as e:
+            error_str = str(e).lower()
+            if "model_not_found" in error_str or "does not exist" in error_str or "404" in error_str:
+                st.warning(f"Model `{model}` is unavailable. Trying next model...")
+                last_error = e
+                continue
+            else:
+                raise e
+
+    raise Exception(f"All models failed. Last error: {last_error}")
 # ============================================================
 # CMMC CONTROL DATABASE
 # ============================================================
@@ -5223,61 +5270,18 @@ Return JSON using this exact structure:
 
 
     try:
-
-        response = client.chat.completions.create(
-
-            model="llama-3.1-8b-instant",
-
-            temperature=0,
-
-            max_tokens=600,
-
-            response_format={
-                "type": "json_object"
-            },
-
+        response, used_model = call_groq_with_fallback(
             messages=[
-
-                {
-                    "role":
-                        "system",
-
-                    "content":
-                        system_prompt
-
-                },
-
-                {
-                    "role":
-                        "user",
-
-                    "content":
-                        user_prompt
-
-                }
-
-            ]
-
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0,
+            max_tokens=800
         )
-
-
-        result = (
-
-            response
-            .choices[0]
-            .message
-            .content
-
-        )
-
-
-        return json.loads(
-            result
-        )
-
+        result = response.choices[0].message.content
+        return json.loads(result)
 
     except Exception as error:
-
         return {
 
             "control_id":
@@ -6911,7 +6915,38 @@ if "assessment_results" in st.session_state:
 
     ]
 
+# ========================================================
+    # BLUF BUTTON – Push open findings to BLUF page
+    # ========================================================
+    st.divider()
+    st.subheader("⚠️ Bottom Line Up Front")
 
+    open_findings_for_bluf = [
+        f for f in all_findings
+        if f.get("status") in ["NON-COMPLIANT", "PARTIALLY COMPLIANT"]
+    ]
+
+    if open_findings_for_bluf:
+        st.info(
+            f"**{len(open_findings_for_bluf)} open finding(s)** "
+            f"(Non-Compliant + Partially Compliant) will be sent to the BLUF page for modeling."
+        )
+    else:
+        st.success("No Non-Compliant or Partially Compliant findings to model.")
+
+    # Store for the BLUF page
+    st.session_state["bluf_open_findings"] = open_findings_for_bluf
+    st.session_state["bluf_cmmc_level"] = st.session_state.get("assessment_level")
+    st.session_state["bluf_framework"] = st.session_state.get("assessment_framework")
+
+    if st.button(
+        "⚠️  Go to BLUF – Model Consequences of Inaction",
+        type="primary",
+        use_container_width=True,
+        key="goto_bluf_button"
+    ):
+        st.switch_page("pages/03_BLUF.py")
+        
     # ========================================================
     # FINDINGS
     # ========================================================
@@ -8921,3 +8956,4 @@ if "assessment_results" in st.session_state:
             use_container_width=True,
             key="download_methodology_pdf"
         )
+      
