@@ -7181,7 +7181,7 @@ else:
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    f"""
+    """
 ### Quick Reference – CMMC POA&M
 
 | Level | POA&M Authorized? | Key Constraint |
