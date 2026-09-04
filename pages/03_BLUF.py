@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import datetime
 
 # -----------------------------------------------------------------------------
 # Page configuration
@@ -222,7 +222,7 @@ st.markdown("### Open Control Findings (Non-Compliant + Partially Compliant)")
 if len(df) > 0:
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Finding": st.column_config.TextColumn("Finding", width="large"),
@@ -818,15 +818,15 @@ else:
     # Navigation buttons
     nav1, nav2, nav3, nav4 = st.columns([1, 1, 1, 3])
     with nav1:
-        if st.button("⏮ Reset", use_container_width=True):
+        if st.button("⏮ Reset", width="stretch"):
             st.session_state.play_stage = 0
             st.rerun()
     with nav2:
-        if st.button("◀ Previous", use_container_width=True, disabled=(current <= 0)):
+        if st.button("◀ Previous", width="stretch", disabled=(current <= 0)):
             st.session_state.play_stage = max(0, current - 1)
             st.rerun()
     with nav3:
-        if st.button("Next Stage ▶", use_container_width=True, disabled=(current >= n_stages - 1)):
+        if st.button("Next Stage ▶", width="stretch", disabled=(current >= n_stages - 1)):
             st.session_state.play_stage = min(n_stages - 1, current + 1)
             st.rerun()
 
@@ -876,7 +876,7 @@ else:
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.caption(
-    f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  |  "
+    f"Generated {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M')} UTC  |  "
     "Notional model for illustration and decision-support purposes only.  "
     "Does not constitute formal risk acceptance, ATO guidance, or operational direction.  "
     "MITRE ATT&CK® is a registered trademark of The MITRE Corporation."
