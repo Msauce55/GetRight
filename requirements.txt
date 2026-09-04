@@ -6,7 +6,4 @@ python-dotenv
 openai
 cryptography
 numpy
-plotly.express 
-plotly.graph_objects
-datetime
-timedelta
+plotly
