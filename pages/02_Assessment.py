@@ -6694,7 +6694,7 @@ if "assessment_results" in st.session_state:
                         f"{format_elapsed(file_elapsed)}"
 
                     )
-                    
+
     # ========================================================
     # BUILD FINDING LIST
     # ========================================================
@@ -7181,7 +7181,7 @@ if "assessment_results" in st.session_state:
             width="stretch",
             key="goto_poam_from_assessment",
         ):
-            st.switch_page("pages/04_POAM.py")
+            st.switch_page("pages/04_POA&M.py")
 
     # ========================================================
     # COST SAVINGS: TOOL VS. CONSULTANT
