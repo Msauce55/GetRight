@@ -6916,36 +6916,63 @@ if "assessment_results" in st.session_state:
     ]
 
 # ========================================================
-    # BLUF BUTTON – Push open findings to BLUF page
-    # ========================================================
-    st.divider()
-    st.subheader("⚠️ Bottom Line Up Front")
+# PUSH OPEN FINDINGS TO BLUF + POA&M PAGES
+# ========================================================
+st.divider()
+st.subheader("Export Open Findings")
 
-    open_findings_for_bluf = [
-        f for f in all_findings
-        if f.get("status") in ["NON-COMPLIANT", "PARTIALLY COMPLIANT"]
+# Collect Non-Compliant + Partially Compliant findings
+open_findings = [
+    f for f in all_findings
+    if str(f.get("status", "")).upper() in [
+        "NON-COMPLIANT",
+        "PARTIALLY COMPLIANT",
     ]
+]
 
-    if open_findings_for_bluf:
-        st.info(
-            f"**{len(open_findings_for_bluf)} open finding(s)** "
-            f"(Non-Compliant + Partially Compliant) will be sent to the BLUF page for modeling."
-        )
-    else:
-        st.success("No Non-Compliant or Partially Compliant findings to model.")
+if open_findings:
+    st.info(
+        f"**{len(open_findings)} open finding(s)** "
+        f"(Non-Compliant + Partially Compliant) are ready to send "
+        f"to the BLUF and POA&M pages."
+    )
+else:
+    st.success("No Non-Compliant or Partially Compliant findings to push.")
 
-    # Store for the BLUF page
-    st.session_state["bluf_open_findings"] = open_findings_for_bluf
-    st.session_state["bluf_cmmc_level"] = st.session_state.get("assessment_level")
-    st.session_state["bluf_framework"] = st.session_state.get("assessment_framework")
+# ---- Shared keys (used by both pages) ----
+st.session_state["assessment_open_findings"] = open_findings
+st.session_state["assessment_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["assessment_framework"] = st.session_state.get("assessment_framework")
 
+# ---- BLUF keys (backward compatible) ----
+st.session_state["bluf_open_findings"] = open_findings
+st.session_state["bluf_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["bluf_framework"] = st.session_state.get("assessment_framework")
+
+# ---- POA&M keys (explicit) ----
+st.session_state["poam_open_findings"] = open_findings
+st.session_state["poam_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["poam_framework"] = st.session_state.get("assessment_framework")
+
+col_bluf, col_poam = st.columns(2)
+
+with col_bluf:
     if st.button(
-        "⚠️  Go to BLUF – Model Consequences of Inaction",
+        "⚠️  Go to BLUF – Model Consequences",
         type="primary",
-        use_container_width=True,
-        key="goto_bluf_button"
+        width="stretch",
+        key="goto_bluf_from_assessment",
     ):
         st.switch_page("pages/03_BLUF.py")
+
+with col_poam:
+    if st.button(
+        "📋  Go to POA&M – Build Remediation Plan",
+        type="primary",
+        width="stretch",
+        key="goto_poam_from_assessment",
+    ):
+        st.switch_page("pages/04_POAM.py")
         
     # ========================================================
     # FINDINGS
