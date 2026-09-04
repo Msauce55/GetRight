@@ -7100,7 +7100,62 @@ if "assessment_results" in st.session_state:
                 ]
             )
 
+# ============================================================
+# PUSH OPEN FINDINGS TO BLUF + POA&M PAGES
+# ============================================================
+st.divider()
+st.subheader("Export Open Findings")
 
+# Collect only Non-Compliant and Partially Compliant findings
+open_findings = [
+    f for f in all_findings
+    if str(f.get("status", f.get("Status", ""))).upper() in [
+        "NON-COMPLIANT", "NON COMPLIANT", "PARTIALLY COMPLIANT", "PARTIAL"
+    ]
+]
+
+if open_findings:
+    st.info(
+        f"**{len(open_findings)} open finding(s)** "
+        f"(Non-Compliant + Partially Compliant) are ready to send to BLUF and POA&M."
+    )
+else:
+    st.success("No Non-Compliant or Partially Compliant findings to push.")
+
+# ---- Shared session state (used by both BLUF and POA&M) ----
+st.session_state["assessment_open_findings"] = open_findings
+st.session_state["assessment_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["assessment_framework"] = st.session_state.get("assessment_framework", "CMMC")
+
+# Keep the older BLUF keys for backward compatibility
+st.session_state["bluf_open_findings"] = open_findings
+st.session_state["bluf_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["bluf_framework"] = st.session_state.get("assessment_framework", "CMMC")
+
+# Dedicated POA&M keys (explicit)
+st.session_state["poam_open_findings"] = open_findings
+st.session_state["poam_cmmc_level"] = st.session_state.get("assessment_level")
+st.session_state["poam_framework"] = st.session_state.get("assessment_framework", "CMMC")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button(
+        "⚠️  Go to BLUF – Model Consequences",
+        type="primary",
+        use_container_width=True,
+        key="goto_bluf_from_assessment"
+    ):
+        st.switch_page("pages/03_BLUF.py")
+
+with col2:
+    if st.button(
+        "📋  Go to POA&M – Build Remediation Plan",
+        type="primary",
+        use_container_width=True,
+        key="goto_poam_from_assessment"
+    ):
+        st.switch_page("pages/04_POAM.py")
     # ========================================================
     # RISK MANAGEMENT MATRIX
     # ========================================================
