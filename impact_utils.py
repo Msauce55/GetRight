@@ -1,253 +1,231 @@
 """
 impact_utils.py
 
-Shared helpers for the Customer Impact Dashboard (06_Customer_Impact.py).
+Persistence layer for the Customer Impact Dashboard.
 
-- log_assessment_run() should be called from 02_Assessment.py once an
-  assessment's results (findings, savings, exposure) are available, so
-  the dashboard has data to show.
-- log_feedback() is called by the dashboard's own feedback form.
+Assessment history and customer feedback are stored as CSV files
+committed directly to this repo via the GitHub Contents API. That
+keeps storage free (no database, no new account beyond GitHub, which
+you already have since the app is deployed from a repo) and makes the
+data durable across Streamlit Community Cloud restarts/redeploys —
+the app's local disk is wiped on every reboot, but the repo isn't.
 
-Storage is a pair of local JSON-lines files under ./data/. This is
-simple and dependency-free, but on most hosted platforms (e.g.
-Streamlit Community Cloud) local disk is EPHEMERAL and will be wiped
-on redeploy/restart. For durable, multi-instance history, swap the
-read/write functions below for a real database (SQLite on a mounted
-volume, Postgres, Google Sheets, etc.) — the rest of the dashboard
-doesn't need to change.
+REQUIRED SETUP
+---------------
+1. Create a GitHub Personal Access Token (fine-grained, scoped to
+   just this repo, with "Contents: Read and write" permission):
+   https://github.com/settings/tokens?type=beta
 
-============================================================
-PRIVACY: ENCRYPTION AT REST
-============================================================
-Every record written to disk (impact_history.jsonl and
-customer_feedback.jsonl) contains a customer's company name and
-representative's name. Because this is proprietary/identifying
-information, records are encrypted with Fernet (AES-128-CBC +
-HMAC, via the `cryptography` package) before they're written, and
-decrypted transparently on read. Nothing in these files is
-plaintext-readable without the key.
+2. Add these to your Streamlit secrets (Settings -> Secrets on
+   Streamlit Community Cloud, or .streamlit/secrets.toml locally):
 
-The encryption key comes from, in order of preference:
+     GITHUB_TOKEN = "ghp_..."
+     GITHUB_REPO = "yourusername/your-repo-name"
+     GITHUB_BRANCH = "data"
 
-  1. The IMPACT_LOG_ENCRYPTION_KEY environment variable / Streamlit
-     secret — a Fernet key you generate once and store securely
-     (e.g. in your deployment's secret manager), the same way you
-     already handle GROQ_API_KEY. Generate one with:
-         python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+3. Add "requests" to requirements.txt if it isn't already pulled in
+   as a dependency of another package.
 
-  2. A local key file at data/.impact_encryption_key, auto-created
-     the first time this module runs if no env/secret key is set.
+Writing to a separate "data" branch (rather than your deployment
+branch) means logged assessments and feedback submissions commit
+quietly in the background without triggering a Streamlit Community
+Cloud redeploy/restart.
 
-Option 2 is a real improvement over plaintext (an attacker who
-only gets the .jsonl files gets nothing usable) but it is NOT a
-substitute for option 1: if the key file lives next to the data
-it protects, anyone with full filesystem access — not just the
-data files — can still read both. For real protection, set
-IMPACT_LOG_ENCRYPTION_KEY as a proper secret, store it somewhere
-separate from the data directory (e.g. your platform's secret
-manager), and do not commit either the key or data/ to git.
-
-If the key is ever lost or changed, previously written records
-become permanently unreadable (this is intentional — it's what
-"encrypted" means). load_impact_history()/load_feedback() skip
-any record that fails to decrypt rather than crashing, so a lost
-key degrades to "history starts over," not an app crash.
-============================================================
+The CSVs are created automatically on first write at:
+   data/impact_history.csv
+   data/feedback.csv
 """
 
-import json
-import os
+import base64
+import io
+import time
 from datetime import datetime, timezone
 
-from cryptography.fernet import Fernet, InvalidToken
+import pandas as pd
+import requests
+import streamlit as st
 
-DATA_DIR = "data"
-IMPACT_LOG_PATH = os.path.join(DATA_DIR, "impact_history.jsonl")
-FEEDBACK_LOG_PATH = os.path.join(DATA_DIR, "customer_feedback.jsonl")
-LOCAL_KEY_PATH = os.path.join(DATA_DIR, ".impact_encryption_key")
 
 STATUS_KEYS = [
     "COMPLIANT",
     "PARTIALLY COMPLIANT",
     "NON-COMPLIANT",
-    "INSUFFICIENT EVIDENCE"
+    "INSUFFICIENT EVIDENCE",
 ]
 
+IMPACT_HISTORY_PATH = "data/impact_history.csv"
+FEEDBACK_PATH = "data/feedback.csv"
+
+IMPACT_HISTORY_COLUMNS = [
+    "timestamp",
+    "company_name",
+    "representative",
+    "cmmc_level",
+    "framework_version",
+    "num_controls",
+    "net_savings",
+    "exposure_avoided",
+] + STATUS_KEYS
+
+FEEDBACK_COLUMNS = [
+    "timestamp",
+    "company_name",
+    "representative",
+    "rating",
+    "comment",
+]
+
+GITHUB_API_TIMEOUT_SECONDS = 15
+MAX_COMMIT_RETRIES = 3
+
 
 # ============================================================
-# ENCRYPTION KEY / FERNET INSTANCE
+# GITHUB CONTENTS API HELPERS
 # ============================================================
 
-_fernet_instance = None
-_key_source = None  # "secret" or "local_file" — surfaced for the UI
+def _github_headers():
+
+    token = st.secrets["GITHUB_TOKEN"]
+
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
 
 
-def _load_or_create_key():
+def _repo():
 
-    global _key_source
-
-    # 1. Streamlit secrets, if available.
-    try:
-
-        import streamlit as st
-
-        key = st.secrets.get("IMPACT_LOG_ENCRYPTION_KEY")
-
-        if key:
-
-            _key_source = "secret"
-
-            return key.encode() if isinstance(key, str) else key
-
-    except Exception:
-
-        pass
-
-    # 2. Environment variable (local dev, or non-Streamlit secrets).
-    env_key = os.getenv("IMPACT_LOG_ENCRYPTION_KEY")
-
-    if env_key:
-
-        _key_source = "secret"
-
-        return env_key.encode() if isinstance(env_key, str) else env_key
-
-    # 3. Local key file — create once if it doesn't exist yet.
-    _ensure_data_dir()
-
-    if os.path.exists(LOCAL_KEY_PATH):
-
-        with open(LOCAL_KEY_PATH, "rb") as f:
-
-            _key_source = "local_file"
-
-            return f.read().strip()
-
-    new_key = Fernet.generate_key()
-
-    with open(LOCAL_KEY_PATH, "wb") as f:
-
-        f.write(new_key)
-
-    try:
-
-        os.chmod(LOCAL_KEY_PATH, 0o600)
-
-    except Exception:
-
-        pass  # best-effort on platforms that don't support chmod
-
-    _key_source = "local_file"
-
-    return new_key
+    return st.secrets["GITHUB_REPO"]
 
 
-def _get_fernet():
+def _branch():
 
-    global _fernet_instance
-
-    if _fernet_instance is None:
-
-        _fernet_instance = Fernet(_load_or_create_key())
-
-    return _fernet_instance
+    return st.secrets.get("GITHUB_BRANCH", "main")
 
 
-def get_key_source():
+def _github_get_file(path):
     """
-    Returns "secret" if the encryption key came from
-    IMPACT_LOG_ENCRYPTION_KEY (recommended), or "local_file" if it
-    was auto-generated on disk (functional, but weaker — see the
-    module docstring). Lets the dashboard show a status hint.
-    Triggers key load/creation as a side effect if not already done.
+    Returns (dataframe, sha) for the CSV at `path` in the repo.
+    Returns (None, None) if the file doesn't exist yet.
     """
 
-    _get_fernet()
+    url = f"https://api.github.com/repos/{_repo()}/contents/{path}"
 
-    return _key_source
+    response = requests.get(
+        url,
+        headers=_github_headers(),
+        params={"ref": _branch()},
+        timeout=GITHUB_API_TIMEOUT_SECONDS,
+    )
 
+    if response.status_code == 404:
+        return None, None
 
-# ============================================================
-# LOW-LEVEL FILE HELPERS (encrypt-on-write, decrypt-on-read)
-# ============================================================
+    response.raise_for_status()
 
-def _ensure_data_dir():
+    payload = response.json()
 
-    os.makedirs(DATA_DIR, exist_ok=True)
+    content = base64.b64decode(payload["content"]).decode("utf-8")
 
+    df = pd.read_csv(io.StringIO(content))
 
-def _append_jsonl(path, record):
-
-    _ensure_data_dir()
-
-    plaintext = json.dumps(record).encode("utf-8")
-
-    token = _get_fernet().encrypt(plaintext)
-
-    with open(path, "a", encoding="utf-8") as f:
-
-        f.write(token.decode("utf-8") + "\n")
+    return df, payload["sha"]
 
 
-def _read_jsonl(path):
+def _github_put_file(path, df, sha, commit_message):
+    """
+    Commits `df` (as CSV) to `path` in the repo. Pass the current
+    `sha` (from _github_get_file) when overwriting an existing file,
+    or None when creating a new file for the first time.
+    """
 
-    if not os.path.exists(path):
+    url = f"https://api.github.com/repos/{_repo()}/contents/{path}"
 
-        return []
+    csv_content = df.to_csv(index=False)
 
-    fernet = _get_fernet()
+    encoded_content = base64.b64encode(
+        csv_content.encode("utf-8")
+    ).decode("utf-8")
 
-    records = []
+    body = {
+        "message": commit_message,
+        "content": encoded_content,
+        "branch": _branch(),
+    }
 
-    skipped = 0
+    if sha:
+        body["sha"] = sha
 
-    with open(path, "r", encoding="utf-8") as f:
+    response = requests.put(
+        url,
+        headers=_github_headers(),
+        json=body,
+        timeout=GITHUB_API_TIMEOUT_SECONDS,
+    )
 
-        for line in f:
+    response.raise_for_status()
 
-            line = line.strip()
 
-            if not line:
+def _append_row_with_retry(path, columns, new_row, commit_message):
+    """
+    Reads the current CSV, appends `new_row`, and commits it back.
+    Retries on a 409 (sha conflict, from two people submitting at
+    nearly the same moment) by re-reading the latest version and
+    trying again.
+    """
 
-                continue
+    for attempt in range(MAX_COMMIT_RETRIES):
 
-            try:
+        df, sha = _github_get_file(path)
 
-                plaintext = fernet.decrypt(line.encode("utf-8"))
+        if df is None:
+            df = pd.DataFrame(columns=columns)
 
-                records.append(json.loads(plaintext))
-
-            except (InvalidToken, ValueError, json.JSONDecodeError):
-
-                # Wrong/rotated key, or a pre-encryption plaintext
-                # line left over from before this change — skip
-                # rather than crash the dashboard.
-                skipped += 1
-
-                continue
-
-    if skipped:
+        df = pd.concat(
+            [df, pd.DataFrame([new_row])],
+            ignore_index=True,
+        )
 
         try:
 
-            import streamlit as st
+            _github_put_file(path, df, sha, commit_message)
 
-            st.caption(
-                f"⚠️ {skipped} record(s) in "
-                f"{os.path.basename(path)} could not be decrypted "
-                "with the current key and were skipped."
+            return
+
+        except requests.HTTPError as error:
+
+            is_conflict = (
+                error.response is not None
+                and error.response.status_code == 409
             )
 
-        except Exception:
+            if is_conflict and attempt < MAX_COMMIT_RETRIES - 1:
+                time.sleep(1)
+                continue
 
-            pass
-
-    return records
+            raise
 
 
 # ============================================================
-# WRITE: CALLED FROM 02_Assessment.py
+# ASSESSMENT HISTORY
 # ============================================================
+
+def load_impact_history():
+    """
+    Returns the full assessment history as a DataFrame. Returns an
+    empty DataFrame (with the right columns) if nothing has been
+    logged yet.
+    """
+
+    df, _ = _github_get_file(IMPACT_HISTORY_PATH)
+
+    if df is None:
+        return pd.DataFrame(columns=IMPACT_HISTORY_COLUMNS)
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    return df
+
 
 def log_assessment_run(
     company_name,
@@ -256,219 +234,81 @@ def log_assessment_run(
     framework_version,
     all_findings,
     savings,
-    exposure
+    exposure,
 ):
     """
-    Record one completed assessment run so it shows up on the
-    Customer Impact Dashboard. The record (including company_name
-    and representative) is encrypted before being written to disk
-    — see the module docstring.
-
-    all_findings: the flattened list of finding dicts (each with a
-        "status" key) used elsewhere in 02_Assessment.py. Only
-        status COUNTS are persisted here, never the finding text,
-        evidence, or reasoning — those stay in-session only.
-    savings: the dict returned by compute_consultant_savings().
-    exposure: the dict returned by compute_risk_exposure_avoided().
+    Appends one row to the assessment history and commits it to the
+    repo.
     """
 
-    counts = {status: 0 for status in STATUS_KEYS}
+    status_counts = {status: 0 for status in STATUS_KEYS}
 
     for finding in all_findings:
 
         status = finding.get("status", "INSUFFICIENT EVIDENCE")
 
-        if status in counts:
+        if status in status_counts:
+            status_counts[status] += 1
 
-            counts[status] += 1
-
-    record = {
-
-        "timestamp":
-            datetime.now(timezone.utc).isoformat(),
-
-        "company_name":
-            company_name or "Unknown Company",
-
-        "representative":
-            representative or "",
-
-        "cmmc_level":
-            cmmc_level or "",
-
-        "framework_version":
-            framework_version or "",
-
-        "num_controls":
-            len(all_findings),
-
-        "counts":
-            counts,
-
-        "net_savings":
-            savings.get("net_savings", 0),
-
-        "estimated_consultant_cost":
-            savings.get("estimated_consultant_cost", 0),
-
-        "tool_cost":
-            savings.get("tool_cost", 0),
-
-        "exposure_avoided":
-            exposure.get("estimated_exposure_avoided", 0),
-
-        "weighted_exposure_percentage":
-            exposure.get("weighted_exposure_percentage", 0)
-
+    new_row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "company_name": company_name,
+        "representative": representative,
+        "cmmc_level": cmmc_level,
+        "framework_version": framework_version,
+        "num_controls": len(all_findings),
+        "net_savings": savings["net_savings"],
+        "exposure_avoided": exposure["estimated_exposure_avoided"],
+        **status_counts,
     }
 
-    _append_jsonl(IMPACT_LOG_PATH, record)
-
-    return record
-
-
-# ============================================================
-# WRITE: CALLED FROM THE DASHBOARD'S FEEDBACK FORM
-# ============================================================
-
-def log_feedback(company_name, representative, rating, comment):
-
-    record = {
-
-        "timestamp":
-            datetime.now(timezone.utc).isoformat(),
-
-        "company_name":
-            company_name or "Unknown Company",
-
-        "representative":
-            representative or "",
-
-        "rating":
-            int(rating),
-
-        "comment":
-            (comment or "").strip()
-
-    }
-
-    _append_jsonl(FEEDBACK_LOG_PATH, record)
-
-    return record
+    _append_row_with_retry(
+        IMPACT_HISTORY_PATH,
+        IMPACT_HISTORY_COLUMNS,
+        new_row,
+        commit_message=f"Log assessment: {company_name}",
+    )
 
 
 # ============================================================
-# READ: CALLED FROM THE DASHBOARD
+# CUSTOMER FEEDBACK
 # ============================================================
-
-def load_impact_history():
-
-    import pandas as pd
-
-    records = _read_jsonl(IMPACT_LOG_PATH)
-
-    if not records:
-
-        return pd.DataFrame()
-
-    df = pd.DataFrame(records)
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-    df = df.dropna(subset=["timestamp"])
-
-    df = df.sort_values("timestamp")
-
-    for status in STATUS_KEYS:
-
-        df[status] = df["counts"].apply(
-            lambda counts_dict, s=status: (
-                counts_dict.get(s, 0)
-                if isinstance(counts_dict, dict)
-                else 0
-            )
-        )
-
-    for numeric_col in (
-        "net_savings",
-        "estimated_consultant_cost",
-        "tool_cost",
-        "exposure_avoided",
-        "weighted_exposure_percentage",
-        "num_controls"
-    ):
-
-        if numeric_col in df.columns:
-
-            df[numeric_col] = pd.to_numeric(
-                df[numeric_col], errors="coerce"
-            ).fillna(0)
-
-    return df
-
 
 def load_feedback():
+    """
+    Returns all customer feedback as a DataFrame, most recent first.
+    Returns an empty DataFrame (with the right columns) if none has
+    been submitted yet.
+    """
 
-    import pandas as pd
+    df, _ = _github_get_file(FEEDBACK_PATH)
 
-    records = _read_jsonl(FEEDBACK_LOG_PATH)
+    if df is None:
+        return pd.DataFrame(columns=FEEDBACK_COLUMNS)
 
-    if not records:
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-        return pd.DataFrame()
-
-    df = pd.DataFrame(records)
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-    df = df.sort_values("timestamp", ascending=False)
-
-    return df
+    return df.sort_values(
+        "timestamp", ascending=False
+    ).reset_index(drop=True)
 
 
-# ============================================================
-# OPTIONAL: PURGE OLD RECORDS (retention hygiene)
-# ============================================================
-#
-# Not wired into the dashboard automatically — call this yourself
-# (e.g. from a scheduled job, or a "Purge old records" admin
-# button you add to the dashboard) if you want a retention policy
-# rather than an ever-growing history file. Rewrites each file
-# encrypted, keeping only records newer than `days`.
-#
-# ============================================================
+def log_feedback(company_name, representative, rating, comment):
+    """
+    Appends one row of feedback and commits it to the repo.
+    """
 
-def purge_older_than(days):
+    new_row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "company_name": company_name,
+        "representative": representative,
+        "rating": rating,
+        "comment": comment,
+    }
 
-    import pandas as pd
-
-    cutoff = pd.Timestamp.now(tz=timezone.utc) - pd.Timedelta(days=days)
-
-    for path in (IMPACT_LOG_PATH, FEEDBACK_LOG_PATH):
-
-        records = _read_jsonl(path)
-
-        if not records:
-
-            continue
-
-        kept = [
-            r for r in records
-            if pd.to_datetime(r.get("timestamp"), errors="coerce", utc=True) >= cutoff
-        ]
-
-        if len(kept) == len(records):
-
-            continue  # nothing to purge
-
-        _ensure_data_dir()
-
-        with open(path, "w", encoding="utf-8") as f:
-
-            for record in kept:
-
-                token = _get_fernet().encrypt(
-                    json.dumps(record).encode("utf-8")
-                )
-
-                f.write(token.decode("utf-8") + "\n")
+    _append_row_with_retry(
+        FEEDBACK_PATH,
+        FEEDBACK_COLUMNS,
+        new_row,
+        commit_message=f"Log feedback: {company_name}",
+    )
