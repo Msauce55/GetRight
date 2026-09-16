@@ -5696,15 +5696,6 @@ uploaded_files = st.file_uploader(
         "but works within the free Groq API tier)."
     )
 
-)
-def show_warning():
-    banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
-    print("=" * len(banner))
-    print(banner)
-    print("=" * len(banner))
-
-show_warning()
-
 st.caption(
 
     "Note: large files are processed in small batches "
@@ -5716,7 +5707,14 @@ st.caption(
     "several minutes to fully process."
 
 )
+)
+def show_warning():
+    banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
+    print("=" * len(banner))
+    print(banner)
+    print("=" * len(banner))
 
+show_warning()
 
 # ============================================================
 # FILE PREVIEW
