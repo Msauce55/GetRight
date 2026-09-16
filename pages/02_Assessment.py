@@ -5512,7 +5512,6 @@ def run_assessment(
 st.title(
     "🛡️ GetRight CMMC Assessment"
 )
-)
 def show_warning():
     banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
     print("=" * len(banner))
