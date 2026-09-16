@@ -5512,7 +5512,14 @@ def run_assessment(
 st.title(
     "🛡️ GetRight CMMC Assessment"
 )
+)
+def show_warning():
+    banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
+    print("=" * len(banner))
+    print(banner)
+    print("=" * len(banner))
 
+show_warning()
 st.caption(
     "AI-assisted cybersecurity evidence analysis "
     "for CMMC assessments."
@@ -5707,14 +5714,6 @@ st.caption(
     "several minutes to fully process."
 
 )
-)
-def show_warning():
-    banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
-    print("=" * len(banner))
-    print(banner)
-    print("=" * len(banner))
-
-show_warning()
 
 # ============================================================
 # FILE PREVIEW
