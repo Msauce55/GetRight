@@ -5512,13 +5512,7 @@ def run_assessment(
 st.title(
     "🛡️ GetRight CMMC Assessment"
 )
-def show_warning():
-    banner = "Warning: This is a demo-only environment, DO NOT upload production or CUI data."
-    print("=" * len(banner))
-    print(banner)
-    print("=" * len(banner))
 
-show_warning()
 st.caption(
     "AI-assisted cybersecurity evidence analysis "
     "for CMMC assessments."
@@ -5679,15 +5673,25 @@ st.subheader(
     "Cybersecurity Evidence"
 )
 
+st.warning(
+    "WARNING: This is a demo-only tool, do not upload production, "
+    "PII, or CUI data."
+)
+
+
 uploaded_files = st.file_uploader(
+
     "Upload cybersecurity log files",
+
     type=[
         "csv",
         "xml",
         "json",
         "txt"
     ],
+
     accept_multiple_files=True,
+
     help=(
         "Upload Windows, Linux, macOS, "
         "firewall, SIEM, EDR, authentication, "
@@ -5696,9 +5700,12 @@ uploaded_files = st.file_uploader(
         "analyzed sequentially (this takes longer "
         "but works within the free Groq API tier)."
     )
+
 )
 
+
 st.caption(
+
     "Note: large files are processed in small batches "
     "(up to 12 batches per file) to stay within Groq's "
     "free-tier rate limit (6,000 tokens/minute for this "
@@ -5706,7 +5713,10 @@ st.caption(
     "roughly 5-10 seconds per batch, per control. A file "
     "with several controls and multiple batches may take "
     "several minutes to fully process."
+
 )
+
+
 # ============================================================
 # FILE PREVIEW
 # ============================================================
@@ -8974,4 +8984,3 @@ if "assessment_results" in st.session_state:
             use_container_width=True,
             key="download_methodology_pdf"
         )
-      
