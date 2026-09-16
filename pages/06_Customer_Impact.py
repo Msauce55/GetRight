@@ -20,7 +20,6 @@ from impact_utils import (
     STATUS_KEYS
 )
 
-st.write("Secret keys found:", list(st.secrets.keys()))
 
 # ============================================================
 # PAGE CONFIGURATION
