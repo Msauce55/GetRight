@@ -1,0 +1,2 @@
+timestamp,company_name,representative,cmmc_level,framework_version,num_controls,net_savings,exposure_avoided,COMPLIANT,PARTIALLY COMPLIANT,NON-COMPLIANT,INSUFFICIENT EVIDENCE
+2026-09-16T20:28:27.480527+00:00,Test,Mikayla,CMMC Level 1,CMMC Current / DoW Requirements,15,5625.0,0,0,2,0,13
