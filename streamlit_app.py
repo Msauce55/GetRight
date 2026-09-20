@@ -198,68 +198,6 @@ The AI-assisted assessment process will guide your organization through:
         )
 st.divider()
 
-if not st.session_state.logged_in_user:
-    st.header("Account Access")
-    tab_login, tab_register = st.tabs(["Login", "Register"])
-
-    with tab_login:
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            login = st.form_submit_button("Sign In")
-
-            if login:
-                email = email.strip().lower()
-                if not email or not password:
-                    st.error("Enter both email and password to sign in.")
-                elif email not in st.session_state.users:
-                    st.error("No account found for that email.")
-                else:
-                    hashed = hash_password(email, password)
-                    if st.session_state.users[email]["password"] != hashed:
-                        st.error("Incorrect password.")
-                    else:
-                        st.session_state.logged_in_user = email
-                        st.success(f"Signed in as {email}.")
-                        st.experimental_rerun()
-
-    with tab_register:
-        with st.form("register_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            register = st.form_submit_button("Create Account")
-
-            if register:
-                email = email.strip().lower()
-                if not email or not password or not confirm_password:
-                    st.error("Enter email and matching passwords to create an account.")
-                elif password != confirm_password:
-                    st.error("Passwords do not match.")
-                elif len(password) < 8:
-                    st.error("Password must be at least 8 characters long.")
-                elif email in st.session_state.users:
-                    st.error("An account already exists for that email.")
-                else:
-                    st.session_state.users[email] = {
-                        "password": hash_password(email, password)
-                    }
-                    save_users(st.session_state.users)
-                    st.session_state.logged_in_user = email
-                    st.success(f"Account created and signed in as {email}.")
-                    st.experimental_rerun()
-
-    st.info("Account Access is for Management Only.")
-
-st.success(f"Signed in as {st.session_state.logged_in_user}.")
-if st.button("Log out"):
-    st.session_state.logged_in_user = None
-    st.experimental_rerun()
-
-with st.expander("Account details"):
-    st.write(f"**Email:** {st.session_state.logged_in_user}")
-
-
 st.markdown(
     """
     <div style="
